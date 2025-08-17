@@ -1,3 +1,4 @@
+// src/pages/Room.jsx
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
@@ -35,10 +36,7 @@ export default function Room({ socket, roomData, onLeave }) {
 
     async function startLocal() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
-        });
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } });
         setLocalStream(stream);
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
