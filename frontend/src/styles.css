@@ -1,0 +1,497 @@
+/* Reset & Base */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  
+  html, body, .app {
+    height: 100%;
+    width: 100%;
+    font-family: 'Inter', Arial, sans-serif;
+  }
+  
+  body {
+    display: flex;
+    flex-direction: column;
+    color: #fff;
+  }
+  
+  /* Background for Join Page */
+  .join {
+    position: relative;
+    min-height: 100vh;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 3rem;
+    background: url('/vectorstock_194.jpg') no-repeat center center / cover;
+  }
+  
+  .join::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(34, 34, 34, 0.6), rgba(0, 0, 0, 0.6));
+    z-index: 0;
+  }
+  
+  /* Title Styling */
+  .join h1 {
+    font-size: 4.5rem;
+    font-weight: 800;
+    text-align: center;
+    margin-bottom: 3.5rem;
+    z-index: 1;
+    letter-spacing: 3px;
+    font-family: 'Poppins', sans-serif;
+    color: #fff;
+    text-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    animation: titlePulse 2s infinite alternate ease-in-out;
+  }
+  
+  /* Title Animation */
+  @keyframes titlePulse {
+    from {
+      transform: scale(1);
+      filter: brightness(1);
+    }
+    to {
+      transform: scale(1.02);
+      filter: brightness(1.1);
+    }
+  }
+  
+  /* Join Form Positioning */
+  .join form {
+    width: 100%;
+    max-width: 500px;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    animation: fadeInUp 1.2s ease-in-out;
+    align-self: flex-start;
+    padding: 2rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 16px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .join input,
+  .join select {
+    padding: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.6);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+    font-size: 1.1rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .join input:focus,
+  .join select:focus {
+    border-color: #4a90e2;
+  }
+
+  .join label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .join label span {
+    font-size: 1.1rem;
+    font-weight: 500;
+  }
+
+  .join button {
+    padding: 16px;
+    background: linear-gradient(90deg, #4a90e2, #6a5acd);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 1.2rem;
+    font-weight: 600;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .join .status {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  .join .hint {
+    margin-top: 2rem;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 1rem;
+  }
+
+  .join input::placeholder {
+    color: rgba(255, 255, 255, 0.7);
+  }
+  
+  .join button:hover {
+    transform: scale(1.05);
+    box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+  }
+  
+  /* Room Page Styling */
+  .room {
+    min-height: 100vh;
+    background: white;
+    color: #333;
+    padding: 20px;
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    justify-content: space-between;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .video-container {
+    flex: 1;
+    max-width: 800px;
+  }
+
+  .room h2 {
+    text-align: left;
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 20px;
+    color: #1e3c72;
+  }
+  
+  .videos {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  
+  .local, .remote {
+    background: #f5f5f5;
+    position: relative;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    width: 350px;
+    height: 250px;
+  }
+  
+  .local video, .remote video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  
+  .label {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    color: white;
+    background: rgba(0,0,0,0.7);
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+  }
+
+  .image-sidebar {
+    width: 400px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .room-image {
+    width: 100%;
+    height: 300px;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  }
+
+  .room-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .header-container {
+    text-align: left;
+    margin-bottom: 2rem;
+    padding: 0 0 0 16px;
+    width: 100%;
+    max-width: 800px;
+    margin-left: 0;
+  }
+
+  .main-heading {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: #1a73e8; /* Google blue */
+    margin: 0 0 0.5rem 0;
+    line-height: 1.2;
+    letter-spacing: -0.5px;
+  }
+
+  .sub-heading {
+    font-size: 1.25rem;
+    font-weight: 500;
+    color: #5f6368; /* Dark gray */
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .quote-box {
+    background: #f8f9fa;
+    padding: 24px;
+    border-radius: 16px;
+    text-align: center;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    border: 1px solid #e0e0e0;
+    margin-top: 20px;
+    transition: all 0.3s ease;
+  }
+
+  .quote-box:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    transform: translateY(-2px);
+  }
+
+  .quote {
+    font-style: italic;
+    color: #3c4043;
+    line-height: 1.8;
+    margin: 0 0 12px 0;
+    font-size: 1.1rem;
+    position: relative;
+    padding: 0 20px;
+  }
+
+  .quote::before,
+  .quote::after {
+    content: '"';
+    font-size: 2.5rem;
+    color: #1a73e8;
+    opacity: 0.3;
+    position: absolute;
+  }
+
+  .quote::before {
+    top: -10px;
+    left: -5px;
+  }
+
+  .quote::after {
+    bottom: -25px;
+    right: -5px;
+  }
+
+  .quote-author {
+    color: #1a73e8;
+    font-weight: 600;
+    font-size: 0.95rem;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin: 0;
+  }
+
+  /* Room Actions Styling */
+  .room-actions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 24px;
+    width: 100%;
+    max-width: 800px;
+    margin-left: 0;
+    padding: 0 0 0 16px;
+  }
+
+  .room-id-container {
+    display: flex;
+    align-items: center;
+    width: auto;
+    min-width: 300px;
+    gap: 10px;
+    background: #f8f9fa;
+    border-radius: 24px;
+    padding: 6px 6px 6px 16px;
+    border: 1px solid #e0e0e0;
+    transition: all 0.3s ease;
+  }
+
+  .room-id-container:hover {
+    border-color: #1a73e8;
+    box-shadow: 0 2px 8px rgba(26, 115, 232, 0.2);
+  }
+
+  .room-id-label {
+    font-weight: 500;
+    color: #5f6368;
+    white-space: nowrap;
+    font-size: 0.95rem;
+  }
+
+  .room-id-button {
+    flex: 1;
+    border: none;
+    background: none;
+    font-family: 'Roboto', sans-serif;
+    font-size: 0.95rem;
+    color: #202124;
+    text-align: left;
+    padding: 8px 12px;
+    border-radius: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+  }
+
+  .room-id-button:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+  }
+
+  .room-id-button:active {
+    background-color: rgba(0, 0, 0, 0.08);
+  }
+
+  .room-id-button.copied {
+    color: #1a73e8;
+  }
+
+  .copy-icon {
+    margin-left: 8px;
+    font-size: 1.1rem;
+    opacity: 0.7;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+    margin-left: 12px;
+    padding-left: 12px;
+    border-left: 1px solid #e0e0e0;
+    min-width: 24px;
+    text-align: center;
+  }
+
+  .join-button {
+    width: auto;
+    min-width: 150px;
+    background-color: #1a73e8;
+    color: white;
+    border: none;
+    border-radius: 24px;
+    padding: 12px 32px;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .join-button:hover {
+    background-color: #1557b0;
+    box-shadow: 0 2px 8px rgba(26, 115, 232, 0.3);
+    transform: translateY(-1px);
+  }
+
+  .join-button:active {
+    background-color: #134a96;
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  @media (max-width: 1200px) {
+    .room {
+      flex-direction: column;
+      align-items: center;
+    }
+    
+    .image-sidebar {
+      width: 100%;
+      max-width: 500px;
+      margin-top: 40px;
+    }
+    
+    .videos {
+      justify-content: center;
+    }
+  }
+  
+  @media (max-width: 992px) {
+    .main-heading {
+      font-size: 2rem;
+    }
+    
+    .sub-heading {
+      font-size: 1.1rem;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .main-heading {
+      font-size: 1.75rem;
+    }
+    
+    .sub-heading {
+      font-size: 1rem;
+    }
+    
+    .quote {
+      font-size: 1rem;
+      padding: 0 15px;
+    }
+    
+    .room-actions {
+      padding: 0 8px;
+    }
+    
+    .room-id-container {
+      padding: 4px 4px 4px 12px;
+    }
+    
+    .room-id-button {
+      font-size: 0.9rem;
+      padding: 6px 10px;
+    }
+    
+    .join-button {
+      padding: 10px 20px;
+      font-size: 0.95rem;
+    }
+  }
+  
+  /* Animations */
+  @keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
