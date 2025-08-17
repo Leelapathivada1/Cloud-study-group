@@ -1,226 +1,250 @@
-require('dotenv').config();
-const express = require('express');
-const http = require('http');
-const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
-const { nanoid } = require('nanoid');
-const { Server } = require('socket.io');
+// server.js
+require("dotenv").config();
+const express = require("express");
+const http = require("http");
+const cors = require("cors");
+const { createClient } = require("@supabase/supabase-js");
+const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 
+// ──────────────────────────────────────────────
+// Middleware
+// ──────────────────────────────────────────────
 app.use(express.json());
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-}));
+app.use(
+  cors({
+    origin: process.env.CORS_ORIGIN || "*",
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    credentials: true,
+  })
+);
 
-// Supabase server client (service_role key)
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// ──────────────────────────────────────────────
+// Supabase
+// ──────────────────────────────────────────────
+const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error('Missing SUPABASE env vars');
+  console.error("❌ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   process.exit(1);
 }
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-// In-memory quick mapping socketId -> member id
-const socketToMember = new Map();
-
+// ──────────────────────────────────────────────
+// Socket.IO
+// ──────────────────────────────────────────────
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || '*',
-  }
+    origin: process.env.CORS_ORIGIN || "*",
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
 });
 
-// Health
-app.get('/', (req, res) => res.send('Cloud Study Group Finder server running'));
+// Keep a lightweight in-memory index for fast matching (optional).
+let waitingCache = new Map(); // socketId -> { id, name, subject, desired_size, socket_id, joined_at }
 
-/**
- * POST /api/join
- * body: { name, subject, desiredSize (int), socketId, email }
- */
-app.post('/api/join', async (req, res) => {
-  const { name, subject, desiredSize = 2, socketId, email } = req.body;
-  if (!name || !subject || !socketId) return res.status(400).json({ error: 'name, subject and socketId required' });
+// Helper: get a queue of waiting users (from DB) for a given subject+size
+async function getWaitingFor(subject, desiredSize, excludeSocketId = null) {
+  const query = supabase
+    .from("members")
+    .select("*")
+    .eq("subject", subject)
+    .eq("desired_size", desiredSize)
+    .is("room_id", null)
+    .order("joined_at", { ascending: true });
+
+  const { data, error } = excludeSocketId
+    ? await query.neq("socket_id", excludeSocketId)
+    : await query;
+
+  if (error) throw error;
+  return data || [];
+}
+
+// ──────────────────────────────────────────────
+app.get("/", (_req, res) => res.send("Cloud Study Group Finder server running"));
+// ──────────────────────────────────────────────
+
+// JOIN endpoint: Add user to waiting queue and try to match
+app.post("/api/join", async (req, res) => {
+  const { name, subject, desiredSize = 2, socketId } = req.body;
+  console.log("➡️  /api/join", { name, subject, desiredSize, socketId });
+
+  if (!name || !subject || !socketId) {
+    return res
+      .status(400)
+      .json({ error: "name, subject and socketId required" });
+  }
 
   try {
-    // First, check if this socket is already in a room
-    const existingMember = await supabase
-      .from('members')
-      .select('*')
-      .eq('socket_id', socketId)
+    // If already waiting (room_id null), just return waiting
+    const { data: existing, error: existingErr } = await supabase
+      .from("members")
+      .select("*")
+      .eq("socket_id", socketId)
+      .is("room_id", null)
       .maybeSingle();
 
-    if (existingMember.data) {
-      // If already in a room, return that room
-      if (existingMember.data.room_id) {
-        const room = await supabase
-          .from('rooms')
-          .select('*')
-          .eq('id', existingMember.data.room_id)
-          .single();
-          
-        if (room.data) {
-          const members = await supabase
-            .from('members')
-            .select('*')
-            .eq('room_id', existingMember.data.room_id);
-            
-          io.to(socketId).emit('matched', {
-            roomId: room.data.id,
-            participants: members.data.map(m => ({
-              id: m.id,
-              name: m.name,
-              socketId: m.socket_id
-            }))
-          });
-          
-          return res.json({ status: 'matched', roomId: room.data.id });
-        }
-      }
-      
-      // If not in a room but exists, delete the old entry
-      await supabase
-        .from('members')
-        .delete()
-        .eq('socket_id', socketId);
-    }
+    if (existingErr) throw existingErr;
 
-    // Insert new member
-    const insertResp = await supabase
-      .from('members')
-      .insert([{
-        name,
-        email,
-        subject,
-        desired_size: desiredSize,
-        socket_id: socketId
-      }])
-      .select()
-      .single();
-
-    if (insertResp.error) throw insertResp.error;
-    const member = insertResp.data;
-    socketToMember.set(socketId, member.id);
-
-    // Find waiting members for this subject
-    const waitingResp = await supabase
-      .from('members')
-      .select('*')
-      .eq('subject', subject)
-      .is('room_id', null)
-      .order('joined_at', { ascending: true });
-
-    if (waitingResp.error) throw waitingResp.error;
-    
-    // Get the first 'desiredSize' members, including the current user if needed
-    const waiting = waitingResp.data;
-    const potentialMatches = waiting.filter(m => m.id !== member.id).slice(0, desiredSize - 1);
-    
-    // If we have enough members (including the current one), create a room
-    if (potentialMatches.length + 1 >= desiredSize) {
-      const membersToMatch = [member, ...potentialMatches];
-      
-      // Create room
-      const roomResp = await supabase
-        .from('rooms')
-        .insert([{ subject }])
+    let me = existing;
+    if (!me) {
+      // Insert as waiting
+      const { data: inserted, error: insertErr } = await supabase
+        .from("members")
+        .insert([
+          {
+            name,
+            subject,
+            desired_size: desiredSize,
+            socket_id: socketId,
+            availability_start: new Date().toISOString(),
+          },
+        ])
         .select()
         .single();
-        
-      if (roomResp.error) throw roomResp.error;
-      const room = roomResp.data;
+      if (insertErr) throw insertErr;
+      me = inserted;
+    }
 
-      // Update all matched members with the room ID
-      const memberIds = membersToMatch.map(m => m.id);
-      const updResp = await supabase
-        .from('members')
+    // Cache for quick lookups (optional)
+    waitingCache.set(socketId, me);
+
+    // Check for potential matches
+    const others = await getWaitingFor(subject, desiredSize, socketId);
+
+    if (others.length + 1 >= desiredSize) {
+      const usersToMatch = [me, ...others.slice(0, desiredSize - 1)];
+
+      // Create room
+      const { data: room, error: roomErr } = await supabase
+        .from("rooms")
+        .insert([{ subject, status: "active" }])
+        .select()
+        .single();
+      if (roomErr) throw roomErr;
+
+      // Assign room to members
+      const memberIds = usersToMatch.map((u) => u.id);
+      const { error: updateErr } = await supabase
+        .from("members")
         .update({ room_id: room.id })
-        .in('id', memberIds)
-        .select();
+        .in("id", memberIds);
+      if (updateErr) throw updateErr;
 
-      if (updResp.error) throw updResp.error;
-      const updatedMembers = updResp.data;
+      // Prepare payload and notify each participant
+      const participants = usersToMatch.map((u) => ({
+        id: u.id,
+        name: u.name,
+        socketId: u.socket_id,
+      }));
 
-      // Notify all matched members
-      for (const m of updatedMembers) {
-        if (m.socket_id) {
-          io.to(m.socket_id).emit('matched', {
-            roomId: room.id,
-            participants: updatedMembers.map(mm => ({
-              id: mm.id,
-              name: mm.name,
-              socketId: mm.socket_id
-            }))
-          });
-        }
-      }
+      usersToMatch.forEach((u) => {
+        // Remove from cache (not waiting anymore)
+        waitingCache.delete(u.socket_id);
+        io.to(u.socket_id).emit("matched", { roomId: room.id, participants });
+      });
 
-      return res.json({ status: 'matched', roomId: room.id });
+      return res.json({ status: "matched", roomId: room.id, participants });
     }
 
-    return res.json({ status: 'waiting' });
-
+    // Not enough to match yet
+    return res.json({ status: "waiting" });
   } catch (err) {
-    console.error('join error', err);
-    return res.status(500).json({ error: err.message || err });
+    console.error("Join error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-app.get('/api/rooms', async (req, res) => {
+// Optional: list rooms for debugging
+app.get("/api/rooms", async (_req, res) => {
   try {
-    const { data, error } = await supabase.from('rooms').select('*').order('created_at', { ascending: false }).limit(50);
+    const { data, error } = await supabase
+      .from("rooms")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(50);
     if (error) throw error;
-    return res.json(data);
+    res.json(data || []);
   } catch (err) {
-    return res.status(500).json({ error: err.message || err });
+    res.status(500).json({ error: err.message || String(err) });
   }
 });
 
-app.post('/api/leave', async (req, res) => {
-  const { socketId } = req.body;
-  if (!socketId) return res.status(400).json({ error: 'socketId required' });
+// Optional: list waiting members (room_id null)
+app.get("/api/waiting", async (_req, res) => {
   try {
-    await supabase.from('members').delete().eq('socket_id', socketId);
-    socketToMember.delete(socketId);
-    res.json({ status: 'left' });
+    const { data, error } = await supabase
+      .from("members")
+      .select("*")
+      .is("room_id", null)
+      .order("joined_at", { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
   } catch (err) {
-    res.status(500).json({ error: err.message || err });
+    res.status(500).json({ error: err.message || String(err) });
   }
 });
 
-/* Socket.io signalling */
-io.on('connection', (socket) => {
-  console.log('socket connected', socket.id);
+// Optional: leave (remove member entirely)
+app.post("/api/leave", async (req, res) => {
+  const { socketId } = req.body;
+  if (!socketId)
+    return res.status(400).json({ error: "socketId required" });
+  try {
+    await supabase.from("members").delete().eq("socket_id", socketId);
+    waitingCache.delete(socketId);
+    res.json({ status: "left" });
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
 
-  socket.on('signal', (payload) => {
-    const { to, data } = payload;
-    if (!to || !data) return;
-    io.to(to).emit('signal', { from: socket.id, data });
-  });
+// Socket.IO lifecycle
+io.on("connection", (socket) => {
+  console.log("🔌 Client connected:", socket.id);
 
-  socket.on('join-room', ({ roomId }) => {
-    if (!roomId) return;
-    socket.join(roomId);
-    socket.to(roomId).emit('peer-joined', { socketId: socket.id });
-  });
-
-  socket.on('leave-room', ({ roomId }) => {
-    if (roomId) socket.leave(roomId);
-  });
-
-  socket.on('disconnect', async () => {
-    console.log('socket disconnected', socket.id);
+  socket.on("disconnect", async () => {
+    console.log("🔌 Client disconnected:", socket.id);
+    // Remove only if still waiting (room_id is null)
     try {
-      await supabase.from('members').delete().eq('socket_id', socket.id);
-    } catch (err) {
-      console.warn('cleanup error', err);
+      await supabase
+        .from("members")
+        .delete()
+        .eq("socket_id", socket.id)
+        .is("room_id", null);
+      waitingCache.delete(socket.id);
+    } catch (e) {
+      console.error("Cleanup error:", e.message || e);
     }
-    socketToMember.delete(socket.id);
+  });
+
+  // WebRTC relay (if you use it in Room.jsx)
+  socket.on("signal", ({ to, data }) => {
+    io.to(to).emit("signal", { from: socket.id, data });
+  });
+
+  socket.on("join-room", ({ roomId }) => {
+    if (roomId) {
+      socket.join(roomId);
+      console.log(`➡️  ${socket.id} joined room ${roomId}`);
+      // Optional room data push:
+      io.to(socket.id).emit("roomData", { roomId });
+    }
+  });
+
+  socket.on("leave-room", ({ roomId }) => {
+    if (roomId) {
+      socket.leave(roomId);
+      console.log(`⬅️  ${socket.id} left room ${roomId}`);
+    }
   });
 });
 
+// ──────────────────────────────────────────────
 server.listen(PORT, () => {
-  console.log(`Server listening on ${PORT}`);
+  console.log(`✅ Server listening on ${PORT}`);
 });
