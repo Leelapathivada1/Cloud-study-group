@@ -16,14 +16,12 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || "*",
+    origin: process.env.CORS_ORIGIN || "http://localhost:5173",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
   })
 );
 
-// ──────────────────────────────────────────────
-// Supabase
 // ──────────────────────────────────────────────
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -37,18 +35,15 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 // ──────────────────────────────────────────────
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || "*",
+    origin: process.env.CORS_ORIGIN || "http://localhost:5173",
     methods: ["GET", "POST"],
     credentials: true,
   },
 });
 
-// Keep a lightweight in-memory index for fast matching (optional).
-let waitingCache = new Map(); // socketId -> { id, name, subject, desired_size, socket_id, joined_at }
-
-// Helper: get a queue of waiting users (from DB) for a given subject+size
+// Small helper: get waiting users for subject+size
 async function getWaitingFor(subject, desiredSize, excludeSocketId = null) {
-  const query = supabase
+  let q = supabase
     .from("members")
     .select("*")
     .eq("subject", subject)
@@ -56,43 +51,62 @@ async function getWaitingFor(subject, desiredSize, excludeSocketId = null) {
     .is("room_id", null)
     .order("joined_at", { ascending: true });
 
-  const { data, error } = excludeSocketId
-    ? await query.neq("socket_id", excludeSocketId)
-    : await query;
+  if (excludeSocketId) q = q.neq("socket_id", excludeSocketId);
 
+  const { data, error } = await q;
   if (error) throw error;
   return data || [];
 }
 
-// ──────────────────────────────────────────────
+// Health
 app.get("/", (_req, res) => res.send("Cloud Study Group Finder server running"));
-// ──────────────────────────────────────────────
 
-// JOIN endpoint: Add user to waiting queue and try to match
+// ──────────────────────────────────────────────
+// Rebind stale socket IDs for waiting users
+// ──────────────────────────────────────────────
+app.post("/api/rebind-socket", async (req, res) => {
+  const { previousSocketId, newSocketId } = req.body || {};
+  if (!newSocketId) return res.status(400).json({ error: "newSocketId required" });
+
+  try {
+    if (previousSocketId && previousSocketId !== newSocketId) {
+      // Update rows still waiting with old socket id
+      await supabase
+        .from("members")
+        .update({ socket_id: newSocketId })
+        .eq("socket_id", previousSocketId)
+        .is("room_id", null);
+    }
+    return res.json({ status: "ok" });
+  } catch (e) {
+    console.error("rebind error:", e);
+    return res.status(500).json({ error: "rebind failed" });
+  }
+});
+
+// ──────────────────────────────────────────────
+// Join queue, try to match
+// ──────────────────────────────────────────────
 app.post("/api/join", async (req, res) => {
   const { name, subject, desiredSize = 2, socketId } = req.body;
   console.log("➡️  /api/join", { name, subject, desiredSize, socketId });
 
   if (!name || !subject || !socketId) {
-    return res
-      .status(400)
-      .json({ error: "name, subject and socketId required" });
+    return res.status(400).json({ error: "name, subject and socketId required" });
   }
 
   try {
-    // If already waiting (room_id null), just return waiting
+    // Upsert-like behavior: if a waiting row exists for this socket, reuse it
     const { data: existing, error: existingErr } = await supabase
       .from("members")
       .select("*")
       .eq("socket_id", socketId)
       .is("room_id", null)
       .maybeSingle();
-
     if (existingErr) throw existingErr;
 
     let me = existing;
     if (!me) {
-      // Insert as waiting
       const { data: inserted, error: insertErr } = await supabase
         .from("members")
         .insert([
@@ -110,10 +124,7 @@ app.post("/api/join", async (req, res) => {
       me = inserted;
     }
 
-    // Cache for quick lookups (optional)
-    waitingCache.set(socketId, me);
-
-    // Check for potential matches
+    // Check for match
     const others = await getWaitingFor(subject, desiredSize, socketId);
 
     if (others.length + 1 >= desiredSize) {
@@ -128,30 +139,31 @@ app.post("/api/join", async (req, res) => {
       if (roomErr) throw roomErr;
 
       // Assign room to members
-      const memberIds = usersToMatch.map((u) => u.id);
-      const { error: updateErr } = await supabase
+      const ids = usersToMatch.map((u) => u.id);
+      const { error: updErr } = await supabase
         .from("members")
         .update({ room_id: room.id })
-        .in("id", memberIds);
-      if (updateErr) throw updateErr;
+        .in("id", ids);
+      if (updErr) throw updErr;
 
-      // Prepare payload and notify each participant
       const participants = usersToMatch.map((u) => ({
         id: u.id,
         name: u.name,
         socketId: u.socket_id,
       }));
+      const payload = { status: "matched", roomId: room.id, subject, participants };
 
-      usersToMatch.forEach((u) => {
-        // Remove from cache (not waiting anymore)
-        waitingCache.delete(u.socket_id);
-        io.to(u.socket_id).emit("matched", { roomId: room.id, participants });
-      });
+      // Notify everyone by socket and also provide roomData
+      for (const u of usersToMatch) {
+        io.to(u.socket_id).emit("matched", payload);
+        io.to(u.socket_id).emit("roomData", payload);
+      }
 
-      return res.json({ status: "matched", roomId: room.id, participants });
+      // Reply to caller as well
+      return res.json(payload);
     }
 
-    // Not enough to match yet
+    // Not enough yet
     return res.json({ status: "waiting" });
   } catch (err) {
     console.error("Join error:", err);
@@ -159,92 +171,98 @@ app.post("/api/join", async (req, res) => {
   }
 });
 
-// Optional: list rooms for debugging
-app.get("/api/rooms", async (_req, res) => {
+// Fallback: get room data (refresh support)
+app.get("/api/room/:roomId", async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data: room, error: roomErr } = await supabase
       .from("rooms")
       .select("*")
-      .order("created_at", { ascending: false })
-      .limit(50);
-    if (error) throw error;
-    res.json(data || []);
-  } catch (err) {
-    res.status(500).json({ error: err.message || String(err) });
-  }
-});
+      .eq("id", req.params.roomId)
+      .single();
+    if (roomErr) throw roomErr;
 
-// Optional: list waiting members (room_id null)
-app.get("/api/waiting", async (_req, res) => {
-  try {
-    const { data, error } = await supabase
+    const { data: participants, error: partErr } = await supabase
       .from("members")
-      .select("*")
-      .is("room_id", null)
-      .order("joined_at", { ascending: true });
-    if (error) throw error;
-    res.json(data || []);
+      .select("id,name,socket_id,subject,desired_size,joined_at,room_id")
+      .eq("room_id", req.params.roomId);
+    if (partErr) throw partErr;
+
+    return res.json({
+      roomId: room.id,
+      subject: room.subject,
+      participants: (participants || []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        socketId: p.socket_id,
+      })),
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message || String(err) });
+    console.error("Get room error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Optional: leave (remove member entirely)
+// Leave (remove only if still waiting)
 app.post("/api/leave", async (req, res) => {
-  const { socketId } = req.body;
-  if (!socketId)
-    return res.status(400).json({ error: "socketId required" });
+  const { socketId } = req.body || {};
+  if (!socketId) return res.status(400).json({ error: "socketId required" });
   try {
-    await supabase.from("members").delete().eq("socket_id", socketId);
-    waitingCache.delete(socketId);
-    res.json({ status: "left" });
+    await supabase.from("members").delete().eq("socket_id", socketId).is("room_id", null);
+    return res.json({ status: "left" });
   } catch (err) {
-    res.status(500).json({ error: err.message || String(err) });
+    return res.status(500).json({ error: err.message || String(err) });
   }
 });
 
-// Socket.IO lifecycle
+// ──────────────────────────────────────────────
+// Socket.IO lifecycle + peer discovery
+// ──────────────────────────────────────────────
 io.on("connection", (socket) => {
   console.log("🔌 Client connected:", socket.id);
 
   socket.on("disconnect", async () => {
     console.log("🔌 Client disconnected:", socket.id);
-    // Remove only if still waiting (room_id is null)
     try {
-      await supabase
-        .from("members")
-        .delete()
-        .eq("socket_id", socket.id)
-        .is("room_id", null);
-      waitingCache.delete(socket.id);
+      await supabase.from("members").delete().eq("socket_id", socket.id).is("room_id", null);
     } catch (e) {
       console.error("Cleanup error:", e.message || e);
     }
   });
 
-  // WebRTC relay (if you use it in Room.jsx)
+  // WebRTC relay
   socket.on("signal", ({ to, data }) => {
-    io.to(to).emit("signal", { from: socket.id, data });
+    if (to && data) io.to(to).emit("signal", { from: socket.id, data });
   });
 
+  // Critical: announce peer presence both ways
   socket.on("join-room", ({ roomId }) => {
-    if (roomId) {
-      socket.join(roomId);
-      console.log(`➡️  ${socket.id} joined room ${roomId}`);
-      // Optional room data push:
-      io.to(socket.id).emit("roomData", { roomId });
+    if (!roomId) return;
+    socket.join(roomId);
+    console.log(`➡️  ${socket.id} joined room ${roomId}`);
+
+    // Notify others that this user joined
+    socket.to(roomId).emit("user-joined", { socketId: socket.id });
+
+    // Let the newcomer know who is already in the room
+    const peers = Array.from(io.sockets.adapter.rooms.get(roomId) || []).filter(
+      (id) => id !== socket.id
+    );
+    for (const peerId of peers) {
+      socket.emit("user-joined", { socketId: peerId });
     }
+
+    // Optional: send minimal roomData
+    io.to(socket.id).emit("roomData", { roomId });
   });
 
   socket.on("leave-room", ({ roomId }) => {
-    if (roomId) {
-      socket.leave(roomId);
-      console.log(`⬅️  ${socket.id} left room ${roomId}`);
-    }
+    if (!roomId) return;
+    socket.leave(roomId);
+    socket.to(roomId).emit("user-left", { socketId: socket.id });
+    console.log(`⬅️  ${socket.id} left room ${roomId}`);
   });
 });
 
-// ──────────────────────────────────────────────
 server.listen(PORT, () => {
   console.log(`✅ Server listening on ${PORT}`);
 });

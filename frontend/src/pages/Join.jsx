@@ -11,25 +11,42 @@ export default function Join({ socket }) {
 
   const navigate = useNavigate();
 
+  // Rebind socket IDs on connect (fixes stale id problem)
   useEffect(() => {
     if (!socket) return;
 
-    const handleConnect = () => {
-      console.log("✅ Socket ready:", socket.id);
+    const apiBase = import.meta.env.VITE_API_URL || "http://localhost:3000";
+
+    const handleConnect = async () => {
+      const prevId = sessionStorage.getItem("lastSocketId");
+      sessionStorage.setItem("lastSocketId", socket.id);
       setSocketReady(true);
+
+      // Tell server to replace any waiting row with the new id
+      try {
+        await fetch(`${apiBase}/api/rebind-socket`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ previousSocketId: prevId, newSocketId: socket.id }),
+        });
+      } catch (e) {
+        console.warn("rebind failed", e);
+      }
     };
+
     const handleDisconnect = () => {
-      console.warn("⚠️ Socket lost");
       setSocketReady(false);
     };
+
     const handleMatched = (data) => {
-      console.log("🎉 Matched:", data);
       navigate(`/room/${data.roomId}`);
     };
 
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
     socket.on("matched", handleMatched);
+
+    if (socket.connected) handleConnect();
 
     return () => {
       socket.off("connect", handleConnect);
@@ -59,7 +76,7 @@ export default function Join({ socket }) {
         body: JSON.stringify({
           name,
           subject,
-          desiredSize,
+          desiredSize: Number(desiredSize),
           socketId: socket.id,
         }),
       });
@@ -67,17 +84,14 @@ export default function Join({ socket }) {
       const data = await response.json();
 
       if (data.error) {
-        console.error("Join error:", data.error);
         setStatus(`Error: ${data.error}`);
         return;
       }
 
-      if (data.status === "matched") {
+      if (data.status === "matched" && data.roomId) {
         navigate(`/room/${data.roomId}`);
-      } else if (data.status === "waiting") {
-        setStatus("Waiting for more students to join...");
       } else {
-        setStatus("");
+        setStatus("Waiting for more students to join...");
       }
     } catch (err) {
       console.error("Error connecting:", err);
@@ -98,7 +112,7 @@ export default function Join({ socket }) {
         />
         <input
           type="text"
-          placeholder="Subject (e.g., Algorithms)"
+          placeholder="Subject (e.g., C, Algorithms)"
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
           required
